@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Vehicle Registration</title>
+<style>
+  body{font-family:Arial,Segoe UI,Helvetica;background:linear-gradient(120deg,#89f7fe,#66a6ff);padding:24px}
+  .card{max-width:720px;margin:0 auto;background:#fff;padding:20px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.12)}
+  h1{text-align:center;color:#333}
+  label{display:block;margin-top:10px;font-weight:600}
+  input,select,textarea{width:100%;padding:10px;margin-top:6px;border-radius:8px;border:1px solid #ddd}
+  .row{display:flex;gap:12px}
+  .row .col{flex:1}
+  .btn{display:inline-block;background:#007bff;color:#fff;padding:12px 16px;border-radius:8px;border:none;cursor:pointer;margin-top:12px;width:100%}
+  .btn-reset{background:#6c757d}
+  .status{margin-top:10px;font-weight:600}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>🚘 Vehicle Registration</h1>
+    <div id="msg" class="status">Open the link sent by admin and enter the password to unlock the form.</div>
+
+    <div id="pwBox" style="margin-top:12px;">
+      <label>Enter Link Password</label>
+      <input id="linkPassword" placeholder="Password provided by admin" />
+      <button id="pwBtn" class="btn" style="width:auto;margin-top:8px">Unlock</button>
+    </div>
+
+    <form id="vehicleForm" style="display:none" autocomplete="off">
+      <label for="name">Name *</label><input id="name" required />
+      <label for="address">Address</label><textarea id="address" rows="2"></textarea>
+      <div class="row">
+        <div class="col"><label>Age</label><input id="age" type="number" min="0" /></div>
+        <div class="col"><label>Contact No *</label><input id="contact" required /></div>
+      </div>
+      <label>Aadhaar</label><input id="aadhaar" />
+      <label>Vehicle Type</label>
+      <select id="vehicleType">
+        <option value="">-- select --</option>
+        <option>Bajaj CNG</option><option>TVS CNG</option>
+        <option>Bajaj Diesel</option><option>TVS Diesel</option>
+        <option>EV</option><option>Electrical</option><option>Other</option>
+      </select>
+      <label>Vehicle No</label><input id="vehicleNo" />
+      <label>Vehicle Model (Year)</label><select id="vehicleModel"></select>
+
+      <button id="submitBtn" class="btn" type="submit">Submit</button>
+      <button id="resetBtn" type="button" class="btn btn-reset">Reset</button>
+    </form>
+
+    <div id="status" class="status"></div>
+  </div>
+
+<script>
+/* CONFIG: set APPS to your deployed Apps Script Web App URL */
+const APPS = 'https://script.google.com/macros/s/AKfycbyVTqcLvDo_4YmrXVSU4OjjTD9uUSTPbLMwuVEiJRQZi9ogHhTPCSVw49QC-wk3G_uq/exec'; // <-- replace with Web App URL
+
+// populate vehicle model years
+const vm = document.getElementById('vehicleModel');
+const cy = new Date().getFullYear();
+for(let y=cy; y>=2000; y--){ let o=document.createElement('option'); o.value=y; o.textContent=y; vm.appendChild(o); }
+
+// token from URL
+const params = new URLSearchParams(location.search);
+const token = params.get('token');
+const msg = document.getElementById('msg');
+const pwBox = document.getElementById('pwBox');
+const pwBtn = document.getElementById('pwBtn');
+const status = document.getElementById('status');
+
+if(!token){
+  msg.textContent = 'This page must be opened using an admin-generated link.';
+  pwBox.style.display = 'none';
+} else {
+  msg.textContent = 'This link requires a password. Enter it below to unlock the form.';
+  pwBox.style.display = 'block';
+}
+
+/* unlock button: validate token+password server-side */
+pwBtn.addEventListener('click', async ()=>{
+  const password = document.getElementById('linkPassword').value.trim();
+  if(!password){ alert('Enter password'); return; }
+  status.textContent = 'Validating...';
+  try{
+    const res = await fetch(APPS + '?action=validateToken&token=' + encodeURIComponent(token) + '&password=' + encodeURIComponent(password));
+    const j = await res.json();
+    if(j.ok){
+      status.textContent = 'Link unlocked. You can fill the form.';
+      pwBox.style.display = 'none';
+      document.getElementById('vehicleForm').style.display = 'block';
+      window._currentToken = token;
+    } else {
+      status.textContent = 'Invalid link/password: ' + (j.reason || j.error || '');
+    }
+  }catch(err){
+    status.textContent = 'Network error while validating.';
+    console.error(err);
+  }
+});
+
+/* submit form: send to Apps Script (submitEntry) and also save to localStorage */
+document.getElementById('vehicleForm').addEventListener('submit', async function(e){
+  e.preventDefault();
+  if(!window._currentToken){ alert('Unlock the link first'); return; }
+
+  const record = {
+    action: 'submitEntry',
+    token: window._currentToken,
+    name: document.getElementById('name').value.trim(),
+    address: document.getElementById('address').value.trim(),
+    age: document.getElementById('age').value,
+    contact: document.getElementById('contact').value.trim(),
+    aadhaar: document.getElementById('aadhaar').value.trim(),
+    vehicleType: document.getElementById('vehicleType').value,
+    vehicleNo: document.getElementById('vehicleNo').value.trim(),
+    vehicleModel: document.getElementById('vehicleModel').value
+  };
+
+  status.textContent = 'Submitting...';
+  try{
+    const r = await fetch(APPS, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(record) });
+    const j = await r.json();
+    if(j.ok){
+      status.textContent = '✅ Successfully submitted.';
+      // local backup
+      const local = JSON.parse(localStorage.getItem('vehicleLocal')||'[]');
+      local.push(Object.assign({timestamp: Date.now()}, record));
+      localStorage.setItem('vehicleLocal', JSON.stringify(local));
+      document.getElementById('vehicleForm').reset();
+    } else {
+      status.textContent = '❌ Submit failed: ' + (j.reason || j.error || '');
+    }
+  }catch(err){
+    status.textContent = '❌ Network error while submitting.';
+    console.error(err);
+  }
+});
+
+/* reset */
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  document.getElementById('vehicleForm').reset();
+  status.textContent = 'Form cleared.';
+});
+</script>
+</body>
+</html>

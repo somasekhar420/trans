@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Admin — Vehicle Entries</title>
+<style>
+  body{font-family:Arial,Segoe UI,Helvetica;background:linear-gradient(135deg,#0d1b2a,#1b263b);color:#e6eef6;margin:0;padding:20px}
+  .wrap{max-width:1200px;margin:0 auto}
+  .card{background:#fff;color:#111;border-radius:12px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,0.3)}
+  header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  input,select{padding:8px;border-radius:8px;border:1px solid #ccc}
+  button{padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:700}
+  .btn-primary{background:#007bff;color:#fff}
+  .btn-ghost{background:transparent;border:1px solid rgba(0,0,0,0.06)}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+  thead th{background:#0b6ef0;color:#fff;position:sticky;top:0}
+  .actions button{margin-right:6px}
+  @media(max-width:800px){
+    table,thead,tbody,tr,th,td{display:block}
+    thead{display:none}
+    tr{margin-bottom:12px;background:#fff;padding:12px;border-radius:8px}
+    td{border:none;padding:6px}
+    td.label{font-weight:700;color:#666}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- Admin open password prompt -->
+  <script>
+    (function(){
+      var p = prompt('Enter admin page password:');
+      if(p === null){ document.documentElement.innerHTML = '<h2 style="text-align:center;margin-top:40px;">Access cancelled.</h2>'; }
+      else if(p !== 'karthikeya'){ alert('Wrong password'); document.documentElement.innerHTML = '<h2 style="text-align:center;margin-top:40px;color:red">Access denied</h2>'; }
+    })();
+  </script>
+
+  <div class="card">
+    <header>
+      <div>
+        <h2>🚖 Admin — Vehicle Entries</h2>
+        <div style="color:#666">Manage / Search / Export / Generate daily links</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="search" placeholder="Search name / aadhaar / contact" />
+        <button id="refresh" class="btn btn-ghost">Refresh</button>
+        <button id="exportCsv" class="btn btn-ghost">Export CSV</button>
+        <button id="openGen" class="btn btn-primary">Generate Daily Link</button>
+      </div>
+    </header>
+
+    <div style="margin-top:12px;overflow:auto">
+      <table id="tbl">
+        <thead><tr>
+          <th>Time</th><th>Name</th><th>Contact</th><th>Aadhaar</th><th>Vehicle</th><th>Model</th><th>Actions</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Generate modal -->
+<div id="genModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);align-items:center;justify-content:center">
+  <div style="background:#fff;padding:16px;border-radius:10px;max-width:520px;margin:auto">
+    <h3>Generate Daily Link</h3>
+    <div style="margin-top:8px">
+      <label>Set customer password (they will need this to open the form)</label>
+      <input id="custPass" placeholder="e.g. cust123" style="width:100%;margin-top:8px;padding:8px;border-radius:6px;border:1px solid #ccc" />
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="createToken" class="btn btn-primary">Create & Show</button>
+      <button id="closeGen" class="btn btn-ghost">Close</button>
+    </div>
+    <div style="margin-top:10px">
+      <input id="genLink" style="width:100%;padding:8px" readonly />
+      <div id="genNote" style="color:#666;margin-top:6px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* CONFIG: set APPS and FORM_PATH */
+const APPS = 'https://script.google.com/macros/s/AKfycbyVTqcLvDo_4YmrXVSU4OjjTD9uUSTPbLMwuVEiJRQZi9ogHhTPCSVw49QC-wk3G_uq/exec'; // <-- replace with Web App URL from Apps Script
+const ADMIN_SECRET = 'karthikeya'; // must match Code.gs ADMIN_SECRET
+const FORM_PATH = '/vehicles-owners-data/fn1/index.html'; // adjust to your hosted form path
+
+const $ = s=>document.querySelector(s);
+let entries = [];
+
+/* escape */
+function escapeHtml(s){ if(!s) return ''; return s.toString().replace(/[&<>"'`]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'})[c]); }
+
+/* load entries from server */
+async function fetchEntries(){
+  try{
+    const res = await fetch(APPS + '?action=listEntries');
+    const j = await res.json();
+    if(!j.ok) throw new Error(j.error||'Failed to fetch');
+    entries = j.entries || [];
+    render(entries);
+  }catch(err){
+    console.error(err);
+    $('tbody').innerHTML = `<tr><td colspan="7" style="color:#c53030">Failed to load: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function render(list){
+  const tbody = document.querySelector('#tbl tbody');
+  if(!list || list.length===0){ tbody.innerHTML = '<tr><td colspan="7">No records</td></tr>'; return; }
+  list.sort((a,b)=>Number(b.timestamp||0)-Number(a.timestamp||0));
+  tbody.innerHTML = '';
+  list.forEach(r=>{
+    const tr = document.createElement('tr');
+    const t = r.timestamp ? new Date(Number(r.timestamp)).toLocaleString() : '-';
+    tr.innerHTML = `<td>${escapeHtml(t)}</td>
+      <td>${escapeHtml(r.name||'')}</td>
+      <td>${escapeHtml(r.contact||'')}</td>
+      <td>${escapeHtml(r.aadhaar||'')}</td>
+      <td>${escapeHtml(r.vehicleType||'')} ${escapeHtml(r.vehicleNo||'')}</td>
+      <td>${escapeHtml(r.vehicleModel||'')}</td>
+      <td class="actions">
+        <button onclick="onEdit('${r.timestamp}')">Edit</button>
+        <button onclick="onDelete('${r.timestamp}')" style="background:#dc3545;color:#fff">Delete</button>
+        <button onclick="onDownload('${r.timestamp}')">Download</button>
+        <button onclick="onPrint('${r.timestamp}')">Print</button>
+        <button onclick="onShare('${r.timestamp}')">Share</button>
+        <button onclick="onHold('${r.timestamp}', this)">${r.hold?'Unhold':'Hold'}</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+$('#openGen').addEventListener('click', ()=> $('#genModal').style.display = 'flex');
+$('#closeGen').addEventListener('click', ()=> $('#genModal').style.display = 'none');
+
+$('#createToken').addEventListener('click', async ()=>{
+  const pass = $('#custPass').value.trim();
+  if(!pass) return alert('Enter customer password');
+  $('#genNote').textContent = 'Creating token...';
+  try{
+    const payload = { action:'createToken', secret: ADMIN_SECRET, password: pass };
+    const res = await fetch(APPS, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const j = await res.json();
+    if(!j.ok) throw new Error(j.error || j.reason || 'createToken failed');
+    const tokenId = j.tokenId;
+    const link = window.location.origin + FORM_PATH + '?token=' + encodeURIComponent(tokenId);
+    $('#genLink').value = link;
+    $('#genNote').textContent = 'Token created, expires at ' + new Date(Number(j.expiresAtMillis)).toLocaleString();
+  }catch(err){
+    $('#genNote').textContent = 'Create token failed: ' + (err.message || '');
+  }
+});
+
+/* edit/delete/hold functions */
+async function onEdit(ts){
+  const rec = entries.find(x=> String(x.timestamp) === String(ts));
+  if(!rec) return alert('Not found');
+  const newName = prompt('Name', rec.name);
+  if(newName === null) return;
+  const newContact = prompt('Contact', rec.contact);
+  if(newContact === null) return;
+  try{
+    const payload = { action:'editEntry', secret: ADMIN_SECRET, timestamp: rec.timestamp, name: newName, contact: newContact };
+    const r = await fetch(APPS, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if(j.ok){ alert('Updated'); fetchEntries(); } else alert('Update failed: ' + (j.error||j.reason));
+  }catch(err){ alert('Update failed'); console.error(err) }
+}
+
+async function onDelete(ts){
+  if(!confirm('Delete record?')) return;
+  try{
+    const payload = { action:'deleteEntry', secret: ADMIN_SECRET, timestamp: ts };
+    const r = await fetch(APPS, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if(j.ok){ alert('Deleted'); fetchEntries(); } else alert('Delete failed: ' + (j.error||j.reason));
+  }catch(err){ alert('Delete failed'); console.error(err) }
+}
+
+function onDownload(ts){
+  const rec = entries.find(x=> String(x.timestamp) === String(ts));
+  if(!rec) return alert('Not found');
+  const cols = ['timestamp','name','address','age','contact','aadhaar','vehicleType','vehicleNo','vehicleModel'];
+  const csv = cols.join(',') + '\n' + cols.map(c=> `"${String(rec[c]||'').replace(/"/g,'""')}"`).join(',');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='entry_'+ts+'.csv'; a.click();
+}
+
+function onPrint(ts){
+  const rec = entries.find(x=> String(x.timestamp) === String(ts));
+  if(!rec) return alert('Not found');
+  const w = window.open('','_blank'); w.document.write('<pre>' + JSON.stringify(rec,null,2) + '</pre>'); w.print();
+}
+
+function onShare(ts){
+  const rec = entries.find(x=> String(x.timestamp) === String(ts));
+  if(!rec) return alert('Not found');
+  const text = `Customer: ${rec.name}\nContact: ${rec.contact}\nVehicle: ${rec.vehicleType} ${rec.vehicleNo}`;
+  if(navigator.share){ navigator.share({title:'Customer', text}).catch(()=> navigator.clipboard.writeText(text).then(()=> alert('Copied'))); }
+  else { navigator.clipboard.writeText(text).then(()=> alert('Copied to clipboard')); }
+}
+
+async function onHold(ts, btn){
+  const rec = entries.find(x=> String(x.timestamp) === String(ts));
+  if(!rec) return;
+  const newHold = !rec.hold;
+  try{
+    const payload = { action:'holdEntry', secret: ADMIN_SECRET, timestamp: rec.timestamp, hold: newHold };
+    const r = await fetch(APPS, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if(j.ok){ alert(newHold ? 'Held' : 'Unheld'); fetchEntries(); } else alert('Hold failed: ' + (j.error||j.reason));
+  }catch(err){ alert('Hold failed'); console.error(err) }
+}
+
+/* search box */
+$('#search').addEventListener('input', (e)=>{
+  const q = e.target.value.trim().toLowerCase();
+  if(!q) return render(entries);
+  const filtered = (entries||[]).filter(r => (r.name||'').toLowerCase().includes(q) || (r.contact||'').toLowerCase().includes(q) || (r.aadhaar||'').toLowerCase().includes(q));
+  render(filtered);
+});
+
+/* export CSV and refresh */
+$('#exportCsv').addEventListener('click', ()=>{
+  const arr = entries || [];
+  if(!arr.length) return alert('No records');
+  const cols = ['timestamp','name','address','age','contact','aadhaar','vehicleType','vehicleNo','vehicleModel','tokenId','hold'];
+  let csv = cols.join(',') + '\n';
+  arr.forEach(r=> csv += cols.map(c=> `"${String(r[c]||'').replace(/"/g,'""')}"`).join(',') + '\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='entries_all.csv'; a.click();
+});
+$('#refresh').addEventListener('click', ()=> fetchEntries());
+
+/* initial load */
+fetchEntries();
+</script>
+</body>
+</html>
